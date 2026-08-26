@@ -2,7 +2,7 @@ const PLACE_ID = 2753915549;
 const POLL_MS = Math.max(5000, Number(process.env.FM_POLL_MS) || 15000);
 const FM_SOURCE_URL = process.env.FM_SOURCE_URL || 'https://hostserver.porry.store/bloxfruit/bot/JobId/fullmoon';
 const SOURCE_TIMEOUT_MS = Math.max(3000, Number(process.env.FM_SOURCE_TIMEOUT_MS) || 10000);
-const MAX_SERVER_PAGES = Math.max(1, Math.min(10, Number(process.env.FM_SERVER_PAGES) || 5));
+const MAX_SERVER_PAGES = Math.max(1, Math.min(10, Number(process.env.FM_SERVER_PAGES) || 10));
 
 const state = {
   running: false,
