@@ -7,6 +7,7 @@ const PORT = Number(process.env.PORT) || 10000;
 const token = process.env.DISCORD_BOT_TOKEN;
 const FIND_TIMEOUT_MS = Math.max(15000, Number(process.env.FM_FIND_TIMEOUT_MS) || 90000);
 const FIND_INTERVAL_MS = Math.max(5000, Number(process.env.FM_FIND_INTERVAL_MS) || 7500);
+const COLLECT_AFTER_FIRST_MS = Math.max(5000, Number(process.env.FM_COLLECT_AFTER_FIRST_MS) || 30000);
 
 if (!token) {
   console.error('Missing DISCORD_BOT_TOKEN environment variable.');
@@ -88,14 +89,23 @@ client.on('messageCreate', async (message) => {
   }
 
   if (command === 'find' && subcommand === 'fm') {
-    const searching = await message.reply({ content: '🌕 **Searching for Full Moon servers...**\n🔎 Scanning live Blox Fruits servers and waiting for verified FM results...' });
+    const searching = await message.reply({ content: '🌕 **Searching for Full Moon servers...**\n🔎 Scanning live Blox Fruits servers and collecting every verified FM result I can find...' });
     const deadline = Date.now() + FIND_TIMEOUT_MS;
+    let firstFoundAt = null;
     let servers = [];
 
     while (Date.now() < deadline) {
       await fmWorker.scanOnce();
       servers = freshFullMoonServers();
-      if (servers.length) break;
+
+      if (servers.length && firstFoundAt === null) {
+        firstFoundAt = Date.now();
+      }
+
+      // Once at least one server is found, keep scanning for a collection window
+      // so additional verified FM servers can be returned instead of stopping at #1.
+      if (firstFoundAt !== null && Date.now() - firstFoundAt >= COLLECT_AFTER_FIRST_MS) break;
+
       const wait = Math.min(FIND_INTERVAL_MS, Math.max(0, deadline - Date.now()));
       if (!wait) break;
       await new Promise((resolve) => setTimeout(resolve, wait));
