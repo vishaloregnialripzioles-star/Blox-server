@@ -2,7 +2,7 @@ const PLACE_ID = 2753915549;
 const POLL_MS = Math.max(5000, Number(process.env.FM_POLL_MS) || 15000);
 const FM_SOURCE_URL = process.env.FM_SOURCE_URL || 'https://hostserver.porry.store/bloxfruit/bot/JobId/fullmoon';
 const SOURCE_TIMEOUT_MS = Math.max(3000, Number(process.env.FM_SOURCE_TIMEOUT_MS) || 10000);
-const MAX_SERVER_PAGES = Math.max(1, Math.min(5, Number(process.env.FM_SERVER_PAGES) || 3));
+const MAX_SERVER_PAGES = Math.max(1, Math.min(10, Number(process.env.FM_SERVER_PAGES) || 5));
 
 const state = {
   running: false,
@@ -89,35 +89,34 @@ async function scanOnce() {
       if (!cursor) break;
     }
 
-    try {
-      const jobIds = await fetchFullMoonSource();
-      const now = Date.now();
-      const liveJobIds = new Set(jobIds);
-      for (const [jobId, report] of state.fullMoonReports) {
-        if (!liveJobIds.has(jobId) || now - report.reportedAt >= 2 * 60 * 1000) {
-          state.fullMoonReports.delete(jobId);
-        }
+    const jobIds = await fetchFullMoonSource();
+    const now = Date.now();
+    const liveJobIds = new Set(jobIds);
+
+    for (const [jobId, report] of state.fullMoonReports) {
+      if (!liveJobIds.has(jobId) || now - report.reportedAt >= 2 * 60 * 1000) {
+        state.fullMoonReports.delete(jobId);
       }
-      for (const jobId of jobIds) {
-        const known = state.servers.get(jobId);
-        if (!known) continue;
-        state.fullMoonReports.set(jobId, {
-          jobId,
-          fullMoon: true,
-          playing: known.playing,
-          maxPlayers: known.maxPlayers,
-          reportedAt: now,
-          source: FM_SOURCE_URL,
-        });
-      }
-    } catch (sourceError) {
-      state.lastError = `FM source: ${sourceError.message}`;
+    }
+
+    for (const jobId of jobIds) {
+      const known = state.servers.get(jobId);
+      if (!known) continue;
+      state.fullMoonReports.set(jobId, {
+        jobId,
+        fullMoon: true,
+        playing: known.playing,
+        maxPlayers: known.maxPlayers,
+        reportedAt: now,
+        source: FM_SOURCE_URL,
+      });
     }
 
     pruneReports();
     state.lastScanAt = new Date().toISOString();
   } catch (error) {
     state.lastError = error.message;
+    state.lastScanAt = new Date().toISOString();
   } finally {
     state.running = false;
   }
