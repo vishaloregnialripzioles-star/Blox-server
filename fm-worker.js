@@ -1,15 +1,13 @@
-const http = require('http');
-
 const PLACE_ID = 2753915549;
 const POLL_MS = Math.max(5000, Number(process.env.FM_POLL_MS) || 15000);
-const REPORT_TOKEN = process.env.FM_REPORT_TOKEN || '';
-const PORT = Number(process.env.FM_WORKER_PORT) || 10001;
-const MAX_SERVERS_PER_PAGE = 100;
+const FM_SOURCE_URL = process.env.FM_SOURCE_URL || 'https://hostserver.porry.store/bloxfruit/bot/JobId/fullmoon';
+const SOURCE_TIMEOUT_MS = Math.max(3000, Number(process.env.FM_SOURCE_TIMEOUT_MS) || 10000);
 
 const state = {
   running: false,
   lastScanAt: null,
-  nextCursor: null,
+  lastSourceAt: null,
+  lastSourceStatus: null,
   servers: new Map(),
   fullMoonReports: new Map(),
   lastError: null,
@@ -19,7 +17,7 @@ async function fetchServers(cursor = null) {
   const url = new URL(`https://games.roblox.com/v1/games/${PLACE_ID}/servers/Public`);
   url.searchParams.set('sortOrder', '2');
   url.searchParams.set('excludeFullGames', 'true');
-  url.searchParams.set('limit', String(MAX_SERVERS_PER_PAGE));
+  url.searchParams.set('limit', '100');
   if (cursor) url.searchParams.set('cursor', cursor);
 
   const response = await fetch(url);
@@ -27,28 +25,50 @@ async function fetchServers(cursor = null) {
   return response.json();
 }
 
-async function scanOnce() {
-  state.running = true;
-  state.lastError = null;
+function collectJobIds(value, result = new Set()) {
+  if (typeof value === 'string') {
+    // Roblox JobIds are UUID-like strings. Accept them anywhere in a source response.
+    const matches = value.match(/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/gi);
+    if (matches) matches.forEach((id) => result.add(id));
+    return result;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) collectJobIds(item, result);
+    return result;
+  }
+
+  if (value && typeof value === 'object') {
+    for (const item of Object.values(value)) collectJobIds(item, result);
+  }
+
+  return result;
+}
+
+async function fetchFullMoonSource() {
+  if (!FM_SOURCE_URL) return [];
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), SOURCE_TIMEOUT_MS);
+
   try {
-    // Public Roblox server discovery gives us JobIds and player counts.
-    // It does NOT expose Blox Fruits' in-game moon state.
-    const page = await fetchServers(state.nextCursor);
-    for (const server of page.data || []) {
-      state.servers.set(server.id, {
-        jobId: server.id,
-        playing: server.playing,
-        maxPlayers: server.maxPlayers,
-        seenAt: Date.now(),
-      });
-    }
-    state.nextCursor = page.nextPageCursor || null;
-    if (!state.nextCursor) state.nextCursor = null;
-    state.lastScanAt = new Date().toISOString();
-  } catch (error) {
-    state.lastError = error.message;
+    const response = await fetch(FM_SOURCE_URL, {
+      headers: { Accept: 'application/json,text/plain,*/*' },
+      signal: controller.signal,
+    });
+
+    state.lastSourceStatus = response.status;
+    if (!response.ok) throw new Error(`FM source returned HTTP ${response.status}`);
+
+    const text = await response.text();
+    state.lastSourceAt = new Date().toISOString();
+
+    let parsed = text;
+    try { parsed = JSON.parse(text); } catch (_) {}
+
+    return [...collectJobIds(parsed)];
   } finally {
-    state.running = false;
+    clearTimeout(timer);
   }
 }
 
@@ -59,76 +79,47 @@ function pruneReports() {
   }
 }
 
-// A trusted game-side observer can POST a verified Full Moon observation here.
-// This endpoint deliberately does not pretend the public server API can detect FM.
-async function handleReport(req, res) {
-  if (REPORT_TOKEN && req.headers.authorization !== `Bearer ${REPORT_TOKEN}`) {
-    res.writeHead(401, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'Unauthorized' }));
-    return;
-  }
-
-  let body = '';
-  for await (const chunk of req) body += chunk;
+async function scanOnce() {
+  if (state.running) return;
+  state.running = true;
+  state.lastError = null;
 
   try {
-    const report = JSON.parse(body);
-    if (!report.jobId || report.fullMoon !== true) throw new Error('jobId and fullMoon=true are required');
+    const page = await fetchServers();
+    for (const server of page.data || []) {
+      state.servers.set(server.id, {
+        jobId: server.id,
+        playing: server.playing,
+        maxPlayers: server.maxPlayers,
+        seenAt: Date.now(),
+      });
+    }
 
-    state.fullMoonReports.set(String(report.jobId), {
-      jobId: String(report.jobId),
-      fullMoon: true,
-      playing: Number(report.playing) || 0,
-      maxPlayers: Number(report.maxPlayers) || 0,
-      reportedAt: Date.now(),
-    });
+    try {
+      const jobIds = await fetchFullMoonSource();
+      for (const jobId of jobIds) {
+        const known = state.servers.get(jobId);
+        state.fullMoonReports.set(jobId, {
+          jobId,
+          fullMoon: true,
+          playing: known?.playing || 0,
+          maxPlayers: known?.maxPlayers || 12,
+          reportedAt: Date.now(),
+          source: FM_SOURCE_URL,
+        });
+      }
+    } catch (sourceError) {
+      state.lastError = `FM source: ${sourceError.message}`;
+    }
 
-    res.writeHead(202, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ ok: true }));
+    pruneReports();
+    state.lastScanAt = new Date().toISOString();
   } catch (error) {
-    res.writeHead(400, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: error.message }));
+    state.lastError = error.message;
+  } finally {
+    state.running = false;
   }
 }
-
-const server = http.createServer(async (req, res) => {
-  if (req.method === 'GET' && req.url === '/health') {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({
-      status: 'ok',
-      worker: 'running',
-      lastScanAt: state.lastScanAt,
-      serversTracked: state.servers.size,
-      verifiedFullMoonServers: state.fullMoonReports.size,
-      lastError: state.lastError,
-    }));
-    return;
-  }
-
-  if (req.method === 'GET' && req.url === '/fm') {
-    pruneReports();
-    const results = [...state.fullMoonReports.values()].map((report) => ({
-      ...report,
-      joinUrl: `https://www.roblox.com/games/start?placeId=${PLACE_ID}&gameInstanceId=${encodeURIComponent(report.jobId)}`,
-    }));
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ placeId: PLACE_ID, results }));
-    return;
-  }
-
-  if (req.method === 'POST' && req.url === '/fm-report') {
-    await handleReport(req, res);
-    return;
-  }
-
-  res.writeHead(404, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify({ error: 'Not found' }));
-});
-
-server.listen(PORT, '0.0.0.0', () => {
-  console.log(`FM worker listening on ${PORT}`);
-  console.log(`Scanning Blox Fruits place ${PLACE_ID}`);
-});
 
 scanOnce();
 setInterval(scanOnce, POLL_MS);
@@ -137,4 +128,5 @@ module.exports = {
   state,
   scanOnce,
   PLACE_ID,
+  FM_SOURCE_URL,
 };
