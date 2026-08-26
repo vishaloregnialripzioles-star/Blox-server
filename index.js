@@ -11,19 +11,18 @@ if (!token) {
   process.exit(1);
 }
 
-const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent,
-  ],
-});
+const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent] });
 
 function freshFullMoonServers() {
   const cutoff = Date.now() - 2 * 60 * 1000;
   return [...fmWorker.state.fullMoonReports.values()]
     .filter((report) => report.reportedAt >= cutoff)
-    .sort((a, b) => b.reportedAt - a.reportedAt);
+    .sort((a, b) => (b.playing - a.playing) || (b.reportedAt - a.reportedAt))
+    .slice(0, 10);
+}
+
+function joinUrl(jobId) {
+  return `https://www.roblox.com/games/start?placeId=${fmWorker.PLACE_ID}&gameInstanceId=${encodeURIComponent(jobId)}`;
 }
 
 const server = http.createServer((req, res) => {
@@ -47,9 +46,10 @@ const server = http.createServer((req, res) => {
   }
 
   if (req.method === 'GET' && req.url === '/fm') {
-    const results = freshFullMoonServers().map((report) => ({
+    const results = freshFullMoonServers().map((report, index) => ({
+      rank: index + 1,
       ...report,
-      joinUrl: `https://www.roblox.com/games/start?placeId=${fmWorker.PLACE_ID}&gameInstanceId=${encodeURIComponent(report.jobId)}`,
+      joinUrl: joinUrl(report.jobId),
     }));
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ placeId: fmWorker.PLACE_ID, results }));
@@ -60,9 +60,7 @@ const server = http.createServer((req, res) => {
   res.end(JSON.stringify({ error: 'Not found' }));
 });
 
-server.listen(PORT, '0.0.0.0', () => {
-  console.log(`Health server listening on port ${PORT}`);
-});
+server.listen(PORT, '0.0.0.0', () => console.log(`Health server listening on port ${PORT}`));
 
 client.once('ready', () => {
   console.log(`${client.user.tag} is online!`);
@@ -72,7 +70,6 @@ client.once('ready', () => {
 
 client.on('messageCreate', async (message) => {
   if (message.author.bot || !message.content.startsWith(PREFIX)) return;
-
   const parts = message.content.slice(PREFIX.length).trim().split(/\s+/);
   const command = (parts.shift() || '').toLowerCase();
   const subcommand = (parts.shift() || '').toLowerCase();
@@ -83,37 +80,29 @@ client.on('messageCreate', async (message) => {
   }
 
   if (command === 'find' && subcommand === 'fm') {
-    const searching = await message.reply({
-      content: '🌕 **Searching for a Full Moon server...**\n🔎 Checking Blox Fruits server data...',
-    });
-
-    // Trigger an immediate scan instead of making the user wait for the next interval.
+    const searching = await message.reply({ content: '🌕 **Searching for Full Moon servers...**\n🔎 Checking live Blox Fruits server data...' });
     await fmWorker.scanOnce();
     const servers = freshFullMoonServers();
 
     if (!servers.length) {
-      await searching.edit({
-        content: '🌕 **No Full Moon server is currently verified by the configured scanner.**\n\nTry again in a few seconds. The scanner automatically keeps checking.',
-        components: [],
-      });
+      await searching.edit({ content: '🌕 **No currently verified Full Moon servers were returned.**\n\nThe scanner keeps checking automatically. Try `.find fm` again shortly.', components: [] });
       return;
     }
 
-    const serverFound = servers[0];
-    const joinUrl = `https://www.roblox.com/games/start?placeId=${fmWorker.PLACE_ID}&gameInstanceId=${encodeURIComponent(serverFound.jobId)}`;
-    const players = `${serverFound.playing}/${serverFound.maxPlayers}`;
+    const lines = ['🌕 **Top Full Moon Servers**', '', '🎮 **Blox Fruits**', ''];
+    const rows = [];
 
-    const row = new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setLabel('Join Server')
-        .setStyle(ButtonStyle.Link)
-        .setURL(joinUrl)
-    );
-
-    await searching.edit({
-      content: `🌕 **Full Moon Server Found!**\n\n🎮 **Blox Fruits**\n👥 **Players:** ${players}\n🆔 **Server:** \`${serverFound.jobId}\``,
-      components: [row],
+    servers.forEach((s, i) => {
+      lines.push(`**${i + 1}.** 👥 ${s.playing}/${s.maxPlayers}`);
+      const rowIndex = Math.floor(i / 5);
+      if (!rows[rowIndex]) rows[rowIndex] = new ActionRowBuilder();
+      rows[rowIndex].addComponents(
+        new ButtonBuilder().setLabel(`Join #${i + 1}`).setStyle(ButtonStyle.Link).setURL(joinUrl(s.jobId))
+      );
     });
+
+    lines.push('', '⏱️ Results are based on the latest verified FM reports and expire after 2 minutes.');
+    await searching.edit({ content: lines.join('\n'), components: rows });
   }
 });
 
