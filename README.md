@@ -45,3 +45,7 @@ Reports older than two minutes are rejected and stale servers automatically disa
 
 - GET /health - bot and worker status.
 - GET /fm - current verified Full Moon results, including Join URLs.
+
+## Persistent Full Moon search
+
+`.find fm` keeps scanning until at least one verified server is found. It does not time out with a no-results message. Observer reports are accepted when `fullMoon` or `isFullMoon` is true, or when `minutesUntilFullMoon` is between 0 and `FM_ABOUT_TO_FULL_MOON_MINUTES` (default: 10).
