@@ -19,19 +19,40 @@ const client = new Client({
   ],
 });
 
+function freshFullMoonServers() {
+  const cutoff = Date.now() - 2 * 60 * 1000;
+  return [...fmWorker.state.fullMoonReports.values()]
+    .filter((report) => report.reportedAt >= cutoff)
+    .sort((a, b) => b.reportedAt - a.reportedAt);
+}
+
 const server = http.createServer((req, res) => {
-  if (req.url === '/health' || req.url === '/') {
+  if (req.url === '/' || req.url === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       status: 'ok',
       bot: client.isReady() ? 'online' : 'starting',
+      prefix: PREFIX,
       fmWorker: {
+        source: fmWorker.FM_SOURCE_URL,
         lastScanAt: fmWorker.state.lastScanAt,
+        lastSourceAt: fmWorker.state.lastSourceAt,
+        lastSourceStatus: fmWorker.state.lastSourceStatus,
         serversTracked: fmWorker.state.servers.size,
-        verifiedFullMoonServers: fmWorker.state.fullMoonReports.size,
+        verifiedFullMoonServers: freshFullMoonServers().length,
         lastError: fmWorker.state.lastError,
       },
     }));
+    return;
+  }
+
+  if (req.method === 'GET' && req.url === '/fm') {
+    const results = freshFullMoonServers().map((report) => ({
+      ...report,
+      joinUrl: `https://www.roblox.com/games/start?placeId=${fmWorker.PLACE_ID}&gameInstanceId=${encodeURIComponent(report.jobId)}`,
+    }));
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ placeId: fmWorker.PLACE_ID, results }));
     return;
   }
 
@@ -43,17 +64,10 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`Health server listening on port ${PORT}`);
 });
 
-function getFreshFullMoonServer() {
-  const cutoff = Date.now() - 2 * 60 * 1000;
-  for (const report of fmWorker.state.fullMoonReports.values()) {
-    if (report.reportedAt >= cutoff) return report;
-  }
-  return null;
-}
-
 client.once('ready', () => {
   console.log(`${client.user.tag} is online!`);
   console.log(`Default prefix: ${PREFIX}`);
+  console.log(`FM source: ${fmWorker.FM_SOURCE_URL}`);
 });
 
 client.on('messageCreate', async (message) => {
@@ -70,18 +84,22 @@ client.on('messageCreate', async (message) => {
 
   if (command === 'find' && subcommand === 'fm') {
     const searching = await message.reply({
-      content: '🌕 **Searching for a verified Full Moon server...**\n🔎 Scanning Blox Fruits public servers...',
+      content: '🌕 **Searching for a Full Moon server...**\n🔎 Checking Blox Fruits server data...',
     });
 
-    const serverFound = getFreshFullMoonServer();
+    // Trigger an immediate scan instead of making the user wait for the next interval.
+    await fmWorker.scanOnce();
+    const servers = freshFullMoonServers();
 
-    if (!serverFound) {
+    if (!servers.length) {
       await searching.edit({
-        content: '🌕 **No verified Full Moon server found yet.**\n\nThe worker is still scanning. Try `.find fm` again after a verified observer reports a Full Moon.',
+        content: '🌕 **No Full Moon server is currently verified by the configured scanner.**\n\nTry again in a few seconds. The scanner automatically keeps checking.',
+        components: [],
       });
       return;
     }
 
+    const serverFound = servers[0];
     const joinUrl = `https://www.roblox.com/games/start?placeId=${fmWorker.PLACE_ID}&gameInstanceId=${encodeURIComponent(serverFound.jobId)}`;
     const players = `${serverFound.playing}/${serverFound.maxPlayers}`;
 
