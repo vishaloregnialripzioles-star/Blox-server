@@ -1,28 +1,38 @@
-# Sparxie Staff Applications
+# Sparxie Forms
 
-Discord OAuth staff application website.
+A Discord-connected web app for staff applications, appeals and custom server forms.
+
+## Features
+
+- Discord OAuth login
+- Server owner/admin dashboard
+- Staff Application, Appeal and Custom form types
+- Default questions that can be edited, removed or expanded
+- Public shareable form links
+- Discord-linked member submissions
+- Per-form reviewer user permissions
+- Optional reviewer role permissions when `DISCORD_BOT_TOKEN` is configured
+- Pending / approved / denied review workflow
+- PostgreSQL persistence when `DATABASE_URL` is configured
 
 ## Render environment variables
 
-- `PUBLIC_URL` — deployed site URL, e.g. `https://your-service.onrender.com`
+Required:
+
+- `PUBLIC_URL` — your deployed HTTPS URL, for example `https://your-app.onrender.com`
 - `DISCORD_CLIENT_ID`
 - `DISCORD_CLIENT_SECRET`
-- `SESSION_SECRET` — long random secret
-- `DATABASE_URL` — optional PostgreSQL/Neon connection string for persistent applications and reviewer settings
-- `OWNER_IDS` — optional comma-separated Discord user IDs with permanent owner access
+- `SESSION_SECRET` — a long random string
+
+Recommended:
+
+- `DATABASE_URL` — Render/Neon PostgreSQL connection URL for persistent forms and submissions
+- `DISCORD_BOT_TOKEN` — enables selecting Discord roles as reviewers and checking role membership
 
 ## Discord OAuth redirect URL
 
-`https://YOUR_PUBLIC_URL/oauth/callback`
+In the Discord Developer Portal, add exactly:
 
-The app uses Discord `identify` and `guilds` OAuth scopes. Server owners and members with Manage Server can open reviewer settings and choose which Discord user IDs can review applications.
+`https://YOUR-APP.onrender.com/oauth/callback`
 
-## Render
-
-Build command: `npm install`
-
-Start command: `npm start`
-
-Health check: `/health`
-
-Without `DATABASE_URL`, data is temporary and may reset after a Render restart/redeploy. Use Neon/Postgres for persistence.
+The value must match `PUBLIC_URL`.
