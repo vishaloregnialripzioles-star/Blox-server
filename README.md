@@ -1,51 +1,28 @@
-# Blox Fruits Full Moon Finder
+# Sparxie Staff Applications
 
-A Discord bot for finding verified Full Moon servers in Blox Fruits. Type .find fm and the bot scans the latest Roblox server data, then replies with one-click Join buttons for confirmed Full Moon servers.
-
-## Discord command
-
-- .find fm - scans for recent verified Full Moon servers and posts Join buttons.
-- .ping - health check for the bot.
-
-The Discord application must have Message Content Intent enabled in the Developer Portal. The bot also needs permission to read and send messages in the command channel.
+Discord OAuth staff application website.
 
 ## Render environment variables
 
-Required:
+- `PUBLIC_URL` — deployed site URL, e.g. `https://your-service.onrender.com`
+- `DISCORD_CLIENT_ID`
+- `DISCORD_CLIENT_SECRET`
+- `SESSION_SECRET` — long random secret
+- `DATABASE_URL` — optional PostgreSQL/Neon connection string for persistent applications and reviewer settings
+- `OWNER_IDS` — optional comma-separated Discord user IDs with permanent owner access
 
-- DISCORD_BOT_TOKEN - the Discord bot token.
-- FM_REPORT_SECRET - a long random secret used by the Full Moon observer.
+## Discord OAuth redirect URL
 
-Optional:
+`https://YOUR_PUBLIC_URL/oauth/callback`
 
-- FM_SOURCE_URL - external Full Moon source URL. Defaults to the configured source in fm-worker.js.
-- FM_POLL_MS - worker polling interval; defaults to 60 seconds.
-- FM_FIND_TIMEOUT_MS - how long .find fm waits; defaults to 90 seconds.
-- FM_FIND_INTERVAL_MS - scan interval while a command is waiting; defaults to 7.5 seconds.
-- FM_SERVER_PAGES - Roblox public-server pages to inspect; defaults to 2.
+The app uses Discord `identify` and `guilds` OAuth scopes. Server owners and members with Manage Server can open reviewer settings and choose which Discord user IDs can review applications.
 
-The service listens on Render PORT and can use node index.js as its start command or the included npm start script.
+## Render
 
-## Observer endpoint
+Build command: `npm install`
 
-The bot accepts verified observer reports at POST /observer/fm.
+Start command: `npm start`
 
-Send the shared secret in the x-fm-secret header and a JSON body such as:
+Health check: `/health`
 
-    {
-      "jobId": "roblox-server-job-id",
-      "playing": 8,
-      "maxPlayers": 12,
-      "reportedAt": 1787740800000
-    }
-
-Reports older than two minutes are rejected and stale servers automatically disappear. The bot only offers a Roblox game-instance Join URL for recently verified reports.
-
-## Health endpoints
-
-- GET /health - bot and worker status.
-- GET /fm - current verified Full Moon results, including Join URLs.
-
-## Persistent Full Moon search
-
-`.find fm` keeps scanning until at least one verified server is found. It does not time out with a no-results message. Observer reports are accepted when `fullMoon` or `isFullMoon` is true, or when `minutesUntilFullMoon` is between 0 and `FM_ABOUT_TO_FULL_MOON_MINUTES` (default: 10).
+Without `DATABASE_URL`, data is temporary and may reset after a Render restart/redeploy. Use Neon/Postgres for persistence.
